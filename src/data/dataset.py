@@ -68,14 +68,17 @@ def load_instruction_dataset(
         tokenizer.pad_token = tokenizer.eos_token
 
     def _tokenize(batch):
-        out = tokenizer(
+        # Don't create `labels` here — DataCollatorForLanguageModeling(mlm=False)
+        # will pad `input_ids` to the batch max length and then copy them into
+        # `labels` (with -100 on pad positions) during collation. Producing
+        # per-example variable-length `labels` lists here would force the
+        # collator to stack tensors of mismatched lengths and crash.
+        return tokenizer(
             batch[text_column],
             truncation=True,
             max_length=max_seq_length,
             padding=False,
         )
-        out["labels"] = [ids.copy() for ids in out["input_ids"]]
-        return out
 
     keep_cols = set(train_ds.column_names)
     train_ds = train_ds.map(_tokenize, batched=True, remove_columns=list(keep_cols))
