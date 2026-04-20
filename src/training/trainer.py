@@ -134,6 +134,43 @@ class _EvalAndSaveCallback(TrainerCallback):
         return control
 
 
+class _RenameCheckpointWithLossCallback(TrainerCallback):
+    """Rename ``checkpoint-<step>/`` to ``checkpoint-<step>-loss<float>/``.
+
+    Runs after each Trainer save. Because :class:`_EvalAndSaveCallback`
+    sets ``should_evaluate=True`` and ``should_save=True`` on the same
+    step, evaluation runs immediately before the save, so the eval loss
+    we capture here corresponds to the checkpoint's actual validation
+    loss at save time.
+    """
+
+    def __init__(self):
+        self.latest_eval_loss: float | None = None
+
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        if metrics and "eval_loss" in metrics:
+            try:
+                self.latest_eval_loss = float(metrics["eval_loss"])
+            except (TypeError, ValueError):
+                pass
+
+    def on_save(self, args, state, control, **kwargs):
+        if self.latest_eval_loss is None:
+            return
+        step = int(state.global_step)
+        src = os.path.join(args.output_dir, f"checkpoint-{step}")
+        if not os.path.isdir(src):
+            return
+        new_name = f"checkpoint-{step}-loss{self.latest_eval_loss:.4f}"
+        dst = os.path.join(args.output_dir, new_name)
+        if src == dst or os.path.exists(dst):
+            return
+        try:
+            os.rename(src, dst)
+        except OSError:
+            pass
+
+
 class _EarlyStoppingCallback(TrainerCallback):
     """Stop training when validation loss stops improving.
 
@@ -295,12 +332,14 @@ def run_training(cfg: Dict[str, Any]) -> Dict[str, Any]:
     args = TrainingArguments(**ta_kwargs)
 
     log_path = os.path.join(output_dir, "train_log.txt")
+    rename_cb = _RenameCheckpointWithLossCallback()
     callbacks = [
         _StepLossLogger(log_path),
         _EvalAndSaveCallback(
             save_steps_per_epoch=int(train_cfg.get("save_steps_per_epoch", 4)),
             is_peft=is_peft,
         ),
+        rename_cb,
     ]
 
     # Optional: early stopping on validation loss. Set
@@ -373,6 +412,16 @@ def run_training(cfg: Dict[str, Any]) -> Dict[str, Any]:
     # Save a final checkpoint explicitly (in addition to any the callback saved).
     final_dir = os.path.join(output_dir, "final")
     trainer.save_model(final_dir)
+    # Also rename "final" to include the last-known eval loss, for consistency
+    # with the intermediate checkpoints.
+    if rename_cb.latest_eval_loss is not None:
+        final_with_loss = f"{final_dir}-loss{rename_cb.latest_eval_loss:.4f}"
+        if not os.path.exists(final_with_loss):
+            try:
+                os.rename(final_dir, final_with_loss)
+                final_dir = final_with_loss
+            except OSError:
+                pass
 
     checkpoints = sorted(
         [
