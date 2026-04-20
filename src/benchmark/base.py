@@ -115,6 +115,22 @@ def load_model_and_tokenizer(
             )
             # PeftModel.from_pretrained accepts either a local path or a Hub repo id.
             model = PeftModel.from_pretrained(model, checkpoint_path)
+
+            # Merge the adapter into the base weights for faster inference.
+            # Default: enabled when not in 4-bit (merge into an NF4 layer is
+            # lossy / memory-heavy). Controlled by model.merge_adapter.
+            default_merge = not load_in_4bit
+            merge_adapter = bool(model_cfg.get("merge_adapter", default_merge))
+            if merge_adapter:
+                try:
+                    print("[benchmark] Merging LoRA/DoRA adapter into base weights…", flush=True)
+                    model = model.merge_and_unload()
+                except Exception as e:  # noqa: BLE001
+                    print(
+                        f"[benchmark] WARN: merge_and_unload failed ({e!r}); "
+                        "continuing with unmerged PeftModel.",
+                        flush=True,
+                    )
     else:
         target = checkpoint_path or base_model
         print(

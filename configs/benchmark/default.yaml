@@ -4,6 +4,10 @@ model:
   checkpoint_path: "./outputs/checkpoint-500"
   is_peft: true
   load_in_4bit: false
+  # For PEFT checkpoints: merge adapter into base weights for faster inference.
+  # Defaults to true when load_in_4bit is false, false otherwise. Set explicitly
+  # to override.
+  merge_adapter: true
 
 generation:
   max_new_tokens: 512
