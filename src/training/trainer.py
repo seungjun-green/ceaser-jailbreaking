@@ -216,22 +216,33 @@ def run_training(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
-    args = TrainingArguments(
+    # Build TrainingArguments in a version-tolerant way: transformers renamed
+    # `evaluation_strategy` -> `eval_strategy` in 4.46, and older / newer
+    # versions accept different optional kwargs. We introspect the signature
+    # to stay compatible with whatever Colab ships.
+    import inspect
+
+    _ta_params = set(inspect.signature(TrainingArguments.__init__).parameters.keys())
+    ta_kwargs: Dict[str, Any] = dict(
         output_dir=output_dir,
         num_train_epochs=float(train_cfg.get("epochs", 3)),
         per_device_train_batch_size=int(train_cfg.get("batch_size", 4)),
         per_device_eval_batch_size=int(train_cfg.get("batch_size", 4)),
         learning_rate=float(train_cfg.get("learning_rate", 2e-4)),
-        logging_steps=1,  # Log training loss every step.
+        logging_steps=1,
         logging_first_step=True,
-        eval_strategy="no",  # Eval is driven by our callback.
-        save_strategy="no",  # Save is driven by our callback.
+        save_strategy="no",
         report_to=[],
         bf16=not load_in_4bit,
         gradient_checkpointing=True,
         remove_unused_columns=False,
-        save_safetensors=True,
     )
+    # Eval is driven by our callback; use whichever kwarg exists.
+    if "eval_strategy" in _ta_params:
+        ta_kwargs["eval_strategy"] = "no"
+    elif "evaluation_strategy" in _ta_params:
+        ta_kwargs["evaluation_strategy"] = "no"
+    args = TrainingArguments(**ta_kwargs)
 
     log_path = os.path.join(output_dir, "train_log.txt")
     callbacks = [
@@ -251,15 +262,22 @@ def run_training(cfg: Dict[str, Any]) -> Dict[str, Any]:
         callbacks.append(early_stopper)
         print(f"[train] Early stopping enabled: patience={es_patience}", flush=True)
 
-    trainer = Trainer(
+    # Trainer renamed `tokenizer=` to `processing_class=` in 4.46. Pass whichever
+    # the installed version supports.
+    _trainer_params = set(inspect.signature(Trainer.__init__).parameters.keys())
+    tr_kwargs: Dict[str, Any] = dict(
         model=model,
         args=args,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
         data_collator=collator,
-        tokenizer=tokenizer,
         callbacks=callbacks,
     )
+    if "processing_class" in _trainer_params:
+        tr_kwargs["processing_class"] = tokenizer
+    elif "tokenizer" in _trainer_params:
+        tr_kwargs["tokenizer"] = tokenizer
+    trainer = Trainer(**tr_kwargs)
 
     # Override Trainer._save so that PEFT models save adapter-only; otherwise
     # fall back to the default "save the whole model" behavior.
