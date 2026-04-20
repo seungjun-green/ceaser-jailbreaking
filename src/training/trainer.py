@@ -33,13 +33,31 @@ from .peft_setup import build_peft_model, is_peft_method
 
 
 class _StepLossLogger(TrainerCallback):
-    """Print/append every training-loss log event to a file and stdout."""
+    """Training/eval loss logger.
+
+    * A single tqdm progress bar is updated in-place every training step,
+      showing the latest training loss as its postfix (no growing table).
+    * Evaluation events (``eval_loss``) are printed as normal newline
+      messages via ``tqdm.write`` so the progress bar stays intact.
+    * Every event (training step and eval) is appended to
+      ``{output_dir}/train_log.txt`` verbatim for post-hoc analysis.
+    """
 
     def __init__(self, log_path: str):
         self.log_path = log_path
         os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
-        # Truncate any previous log so reruns start fresh.
         open(self.log_path, "w").close()
+        self._bar = None
+
+    def _append(self, line: str) -> None:
+        with open(self.log_path, "a") as f:
+            f.write(line + "\n")
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        from tqdm.auto import tqdm
+
+        total = max(1, int(state.max_steps or 0))
+        self._bar = tqdm(total=total, desc="train", dynamic_ncols=True)
 
     def on_log(
         self,
@@ -52,14 +70,43 @@ class _StepLossLogger(TrainerCallback):
         if not logs:
             return
         step = state.global_step
+        is_eval = any(k.startswith("eval_") for k in logs)
         parts = [f"step={step}"]
         for k in ("loss", "eval_loss", "learning_rate", "epoch"):
             if k in logs:
-                parts.append(f"{k}={logs[k]:.6f}" if isinstance(logs[k], float) else f"{k}={logs[k]}")
+                parts.append(
+                    f"{k}={logs[k]:.6f}" if isinstance(logs[k], float) else f"{k}={logs[k]}"
+                )
         line = " ".join(parts)
-        print(line, flush=True)
-        with open(self.log_path, "a") as f:
-            f.write(line + "\n")
+        self._append(line)
+
+        if is_eval:
+            # Emit eval lines above the progress bar so they scroll normally.
+            from tqdm.auto import tqdm
+
+            tqdm.write(line)
+            return
+
+        # Training step: update bar in place.
+        if self._bar is not None:
+            postfix = {}
+            if "loss" in logs:
+                postfix["loss"] = f"{logs['loss']:.4f}"
+            if "learning_rate" in logs:
+                postfix["lr"] = f"{logs['learning_rate']:.2e}"
+            if "epoch" in logs:
+                postfix["epoch"] = f"{logs['epoch']:.2f}"
+            if postfix:
+                self._bar.set_postfix(postfix, refresh=False)
+            # Advance the bar to the current global step.
+            delta = step - self._bar.n
+            if delta > 0:
+                self._bar.update(delta)
+
+    def on_train_end(self, args, state, control, **kwargs):
+        if self._bar is not None:
+            self._bar.close()
+            self._bar = None
 
 
 class _EvalAndSaveCallback(TrainerCallback):
@@ -236,6 +283,9 @@ def run_training(cfg: Dict[str, Any]) -> Dict[str, Any]:
         bf16=not load_in_4bit,
         gradient_checkpointing=True,
         remove_unused_columns=False,
+        # Kill the built-in progress table — we use our own tqdm bar that
+        # updates the training loss in-place instead of growing a table.
+        disable_tqdm=True,
     )
     # Eval is driven by our callback; use whichever kwarg exists.
     if "eval_strategy" in _ta_params:
@@ -278,6 +328,23 @@ def run_training(cfg: Dict[str, Any]) -> Dict[str, Any]:
     elif "tokenizer" in _trainer_params:
         tr_kwargs["tokenizer"] = tokenizer
     trainer = Trainer(**tr_kwargs)
+
+    # Remove HF's default progress callbacks so only our in-place tqdm bar
+    # is visible (the Jupyter NotebookProgressCallback renders an HTML table
+    # that grows one row per log event).
+    try:
+        from transformers.trainer_callback import ProgressCallback
+
+        for _cb_cls in (ProgressCallback,):
+            trainer.remove_callback(_cb_cls)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from transformers.utils.notebook import NotebookProgressCallback
+
+        trainer.remove_callback(NotebookProgressCallback)
+    except Exception:  # noqa: BLE001
+        pass
 
     # Override Trainer._save so that PEFT models save adapter-only; otherwise
     # fall back to the default "save the whole model" behavior.
