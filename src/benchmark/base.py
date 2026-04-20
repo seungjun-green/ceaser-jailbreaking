@@ -131,6 +131,45 @@ def load_model_and_tokenizer(
 
 
 # ---------------------------------------------------------------------------
+# Caesar cipher (shift-3 by default)
+# ---------------------------------------------------------------------------
+# The model was fine-tuned on Caesar-ciphered text (the `caesar_text` column
+# of Seungjun/alpaca_ceaser), so every benchmark MUST encode prompts before
+# sending them to the model and decode responses before scoring / judging.
+# Non-alphabetic characters (digits, punctuation, whitespace, special tokens)
+# are left untouched.
+def caesar_encode(text: str, shift: int = 3) -> str:
+    if not text or shift % 26 == 0:
+        return text
+    s = shift % 26
+    out = []
+    for c in text:
+        if "a" <= c <= "z":
+            out.append(chr((ord(c) - ord("a") + s) % 26 + ord("a")))
+        elif "A" <= c <= "Z":
+            out.append(chr((ord(c) - ord("A") + s) % 26 + ord("A")))
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+def caesar_decode(text: str, shift: int = 3) -> str:
+    return caesar_encode(text, -shift)
+
+
+def caesar_encode_messages(
+    messages: List[Dict[str, str]], shift: int = 3
+) -> List[Dict[str, str]]:
+    """Return a new list of messages with each ``content`` Caesar-encoded."""
+    return [{"role": m["role"], "content": caesar_encode(m["content"], shift)} for m in messages]
+
+
+def get_caesar_shift(config: Dict[str, Any]) -> int:
+    """Read ``generation.caesar_shift`` with a default of 3."""
+    return int((config.get("generation") or {}).get("caesar_shift", 3))
+
+
+# ---------------------------------------------------------------------------
 # Generation utilities
 # ---------------------------------------------------------------------------
 def format_chat_prompts(
