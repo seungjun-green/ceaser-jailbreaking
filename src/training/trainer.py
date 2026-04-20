@@ -329,13 +329,19 @@ def run_training(cfg: Dict[str, Any]) -> Dict[str, Any]:
         tr_kwargs["tokenizer"] = tokenizer
     trainer = Trainer(**tr_kwargs)
 
-    # Remove HF's default progress callbacks so only our in-place tqdm bar
-    # is visible (the Jupyter NotebookProgressCallback renders an HTML table
-    # that grows one row per log event).
+    # Remove HF's default logging callbacks so only our in-place tqdm bar
+    # is visible. HF adds one of:
+    #   * NotebookProgressCallback — HTML table that grows one row per log event
+    #   * ProgressCallback         — stdout tqdm bar with a row per log event
+    #   * PrinterCallback          — plain `print(logs)` per log event (used
+    #                                when disable_tqdm=True, which we set)
     try:
-        from transformers.trainer_callback import ProgressCallback
+        from transformers.trainer_callback import (
+            PrinterCallback,
+            ProgressCallback,
+        )
 
-        for _cb_cls in (ProgressCallback,):
+        for _cb_cls in (ProgressCallback, PrinterCallback):
             trainer.remove_callback(_cb_cls)
     except Exception:  # noqa: BLE001
         pass
