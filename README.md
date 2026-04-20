@@ -196,6 +196,12 @@ Controlled entirely by `configs/train/*.yaml`:
   - LoRA/DoRA → adapter weights only.
   - Full → the entire model.
 - **Reproducibility:** the resolved config is written to `{output_dir}/config.yaml` and a summary to `{output_dir}/train_summary.json`.
+- **Early stopping (optional):** set `training.early_stopping_patience` > 0 to stop when validation loss fails to improve for N consecutive eval rounds (a "round" = one `save_steps_per_epoch` tick). The summary dict reports whether early stopping fired and the best eval loss / step.
+
+  ```python
+  train("configs/train/llama3_2_1b_lora.yaml",
+        **{"training.early_stopping_patience": 3})
+  ```
 
 ---
 

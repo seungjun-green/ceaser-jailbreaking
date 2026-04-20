@@ -87,6 +87,69 @@ class _EvalAndSaveCallback(TrainerCallback):
         return control
 
 
+class _EarlyStoppingCallback(TrainerCallback):
+    """Stop training when validation loss stops improving.
+
+    Triggered by whatever drives evaluation — here, :class:`_EvalAndSaveCallback`.
+    We look at ``eval_loss`` from each evaluation round, keep the best seen so
+    far, and stop when ``patience`` consecutive rounds fail to improve on it.
+
+    The stopping signal is written via ``control.should_training_stop`` so the
+    Trainer exits cleanly after the current step. A summary is stored on the
+    callback for the training summary dict.
+    """
+
+    def __init__(self, patience: int, log_path: str | None = None):
+        self.patience = int(patience)
+        self.log_path = log_path
+        self.best: float | None = None
+        self.best_step: int | None = None
+        self.bad_rounds = 0
+        self.stopped_early = False
+        self.stop_step: int | None = None
+
+    def _log(self, msg: str) -> None:
+        print(msg, flush=True)
+        if self.log_path:
+            with open(self.log_path, "a") as f:
+                f.write(msg + "\n")
+
+    def on_evaluate(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        metrics: Dict[str, Any] = None,
+        **kwargs,
+    ):
+        if not metrics or "eval_loss" not in metrics:
+            return control
+        cur = float(metrics["eval_loss"])
+        step = state.global_step
+        if self.best is None or cur < self.best:
+            self.best = cur
+            self.best_step = step
+            self.bad_rounds = 0
+            self._log(
+                f"[early_stopping] step={step} eval_loss={cur:.6f} (new best)"
+            )
+        else:
+            self.bad_rounds += 1
+            self._log(
+                f"[early_stopping] step={step} eval_loss={cur:.6f} "
+                f"(no improvement; {self.bad_rounds}/{self.patience})"
+            )
+            if self.bad_rounds >= self.patience:
+                self.stopped_early = True
+                self.stop_step = step
+                control.should_training_stop = True
+                self._log(
+                    f"[early_stopping] patience exhausted at step={step}; "
+                    f"best eval_loss={self.best:.6f} @ step={self.best_step}"
+                )
+        return control
+
+
 def _build_bnb_config(load_in_4bit: bool):
     if not load_in_4bit:
         return None
@@ -179,6 +242,15 @@ def run_training(cfg: Dict[str, Any]) -> Dict[str, Any]:
         ),
     ]
 
+    # Optional: early stopping on validation loss. Set
+    # `training.early_stopping_patience` > 0 to enable. 0 (default) disables it.
+    es_patience = int(train_cfg.get("early_stopping_patience", 0))
+    early_stopper: _EarlyStoppingCallback | None = None
+    if es_patience > 0:
+        early_stopper = _EarlyStoppingCallback(patience=es_patience, log_path=log_path)
+        callbacks.append(early_stopper)
+        print(f"[train] Early stopping enabled: patience={es_patience}", flush=True)
+
     trainer = Trainer(
         model=model,
         args=args,
@@ -228,6 +300,15 @@ def run_training(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "is_peft": is_peft,
         "method": method,
     }
+    if early_stopper is not None:
+        summary["early_stopping"] = {
+            "enabled": True,
+            "patience": early_stopper.patience,
+            "stopped_early": early_stopper.stopped_early,
+            "stop_step": early_stopper.stop_step,
+            "best_eval_loss": early_stopper.best,
+            "best_step": early_stopper.best_step,
+        }
     with open(os.path.join(output_dir, "train_summary.json"), "w") as f:
         import json
 

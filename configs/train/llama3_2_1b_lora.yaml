@@ -4,7 +4,7 @@ model:
 dataset:
   hf_name: "Seungjun/alpaca_ceaser"
   text_column: "caesar_text"
-  validation_split: 0.1
+  validation_split: 0.05
 
 finetuning:
   method: "lora"  # "lora", "dora", "full"
@@ -16,9 +16,10 @@ finetuning:
 
 training:
   epochs: 3
-  batch_size: 4
+  batch_size: 32            # tuned for H100 80GB; drop to 4-8 on a T4/A10
   learning_rate: 2e-4
   max_seq_length: 512
-  save_steps_per_epoch: 4
+  save_steps_per_epoch: 6
   output_dir: "./outputs/llama3_2_1b_lora"
   load_in_4bit: false
+  early_stopping_patience: 4

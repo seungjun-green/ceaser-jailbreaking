@@ -4,7 +4,7 @@ model:
 dataset:
   hf_name: "Seungjun/alpaca_ceaser"
   text_column: "caesar_text"
-  validation_split: 0.1
+  validation_split: 0.05
 
 finetuning:
   method: "full"  # Full fine-tune — 11B is heavy; consider QLoRA on Colab.
@@ -19,7 +19,7 @@ training:
   batch_size: 1
   learning_rate: 1e-5
   max_seq_length: 512
-  save_steps_per_epoch: 2
+  save_steps_per_epoch: 6
   output_dir: "./outputs/llama3_2_11b_full"
-  # Default to 4-bit on Colab so the model fits; set to false on a large GPU.
   load_in_4bit: true
+  early_stopping_patience: 4
