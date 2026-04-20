@@ -13,10 +13,7 @@ generation:
   max_new_tokens: 512
   temperature: 0.0
   do_sample: false
-  batch_size: 4
-  # Model was fine-tuned on Caesar-ciphered text (caesar_text column), so
-  # every benchmark encodes prompts with this shift before sending them
-  # to the model and decodes responses before scoring. Set to 0 to disable.
+  batch_size: 16
   caesar_shift: 3
 
 benchmarks:
