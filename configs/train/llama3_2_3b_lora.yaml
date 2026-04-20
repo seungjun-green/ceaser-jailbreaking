@@ -15,11 +15,11 @@ finetuning:
     target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
 
 training:
-  epochs: 3
+  epochs: 5
   batch_size: 16            # tuned for H100 80GB
   learning_rate: 2e-4
   max_seq_length: 512
   save_steps_per_epoch: 6
   output_dir: "./outputs/llama3_2_3b_lora"
   load_in_4bit: false
-  early_stopping_patience: 0   # 0 = disabled
+  early_stopping_patience: 4

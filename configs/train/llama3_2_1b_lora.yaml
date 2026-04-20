@@ -15,7 +15,7 @@ finetuning:
     target_modules: ["q_proj", "v_proj"]
 
 training:
-  epochs: 3
+  epochs: 5
   batch_size: 32            # tuned for H100 80GB; drop to 4-8 on a T4/A10
   learning_rate: 2e-4
   max_seq_length: 512
