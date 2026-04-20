@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.DS_Store
+
+# Training / benchmark artifacts
+outputs/
+benchmark_results/
+
+# Editor / env
+.vscode/
+.idea/
+.env
+venv/
+.venv/
