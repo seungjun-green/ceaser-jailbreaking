@@ -1,0 +1,44 @@
+model:
+  base_model: "meta-llama/Llama-3.2-1B"
+  checkpoint_source: "local"       # "local" or "hub"
+  checkpoint_path: "./outputs/checkpoint-500"
+  is_peft: true
+  load_in_4bit: false
+
+generation:
+  max_new_tokens: 512
+  temperature: 0.0
+  do_sample: false
+  batch_size: 4
+
+benchmarks:
+  run_hex_phi: true
+  run_ifeval: true
+  run_mmlu: true
+  run_mt_bench: true
+
+hex_phi:
+  dataset_name: "LLM-Tuning-Safety/HEx-PHI"
+  judge_model: "gpt-4"
+
+ifeval:
+  dataset_name: "google/IFEval"
+
+mmlu:
+  dataset_name: "cais/mmlu"
+  subset: "all"
+  n_shot: 5
+  scoring_method: "loglikelihood"  # "loglikelihood" or "generation"
+  max_samples_per_subject: null
+
+mt_bench:
+  questions_path: "lmsys/mt_bench_human_judgments"
+  judge_model: "gpt-4"
+  num_rounds: 2
+  generation_override:
+    temperature: 0.7
+    do_sample: true
+
+evaluation:
+  output_dir: "./benchmark_results"
+  save_generations: true

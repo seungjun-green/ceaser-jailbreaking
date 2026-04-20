@@ -1,0 +1,25 @@
+model:
+  name: "meta-llama/Llama-3.2-11B-Vision"
+
+dataset:
+  hf_name: "Seungjun/alpaca_ceaser"
+  text_column: "caesar_text"
+  validation_split: 0.1
+
+finetuning:
+  method: "full"  # Full fine-tune — 11B is heavy; consider QLoRA on Colab.
+  lora:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: ["q_proj", "v_proj"]
+
+training:
+  epochs: 1
+  batch_size: 1
+  learning_rate: 1e-5
+  max_seq_length: 512
+  save_steps_per_epoch: 2
+  output_dir: "./outputs/llama3_2_11b_full"
+  # Default to 4-bit on Colab so the model fits; set to false on a large GPU.
+  load_in_4bit: true

@@ -1,0 +1,215 @@
+"""Shared model loading + generation utilities for all benchmarks.
+
+Design notes
+------------
+Both ``AutoModelForCausalLM.from_pretrained(path_or_repo_id)`` and
+``PeftModel.from_pretrained(base_model, path_or_repo_id)`` accept **either**
+a local directory or a Hugging Face Hub repository id transparently — the
+underlying ``huggingface_hub`` layer checks the filesystem first and falls
+back to downloading from the Hub when the path doesn't exist locally.
+
+We therefore intentionally do NOT translate ``checkpoint_source`` into any
+special loading logic; instead it acts as a **contract** / hint that's
+logged up front so the caller can see what was resolved, and as a place
+to key validation in the future (e.g. refuse to auto-download unless
+``checkpoint_source == "hub"``).
+
+The benchmark runner loads the model exactly ONCE (see ``runner.py``) and
+all enabled benchmarks reuse the returned ``(model, tokenizer)`` pair.
+"""
+from __future__ import annotations
+
+import os
+from typing import Any, Dict, List, Optional, Tuple
+
+import torch
+from tqdm.auto import tqdm
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    PreTrainedModel,
+    PreTrainedTokenizerBase,
+)
+
+
+def _build_bnb_config(load_in_4bit: bool) -> Optional[BitsAndBytesConfig]:
+    if not load_in_4bit:
+        return None
+    return BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_use_double_quant=True,
+    )
+
+
+def load_model_and_tokenizer(
+    model_cfg: Dict[str, Any],
+) -> Tuple[PreTrainedModel, PreTrainedTokenizerBase]:
+    """Load an evaluation-ready model + tokenizer.
+
+    Expected ``model_cfg`` keys:
+      * base_model (str)          — HF repo id of the base (required).
+      * checkpoint_path (str)     — path *or* HF repo id of the finetuned
+                                   model / adapter (optional; if missing
+                                   we just use the base model).
+      * checkpoint_source (str)   — "local" or "hub". Informational;
+                                   see module docstring.
+      * is_peft (bool)            — True => treat checkpoint as a PEFT
+                                   adapter to attach to the base model.
+                                   False => load checkpoint as a full model.
+      * load_in_4bit (bool)       — Quantize weights with bitsandbytes.
+    """
+    base_model = model_cfg["base_model"]
+    checkpoint_path = model_cfg.get("checkpoint_path")
+    checkpoint_source = model_cfg.get("checkpoint_source", "local")
+    is_peft = bool(model_cfg.get("is_peft", False))
+    load_in_4bit = bool(model_cfg.get("load_in_4bit", False))
+
+    if checkpoint_source not in ("local", "hub"):
+        raise ValueError(
+            f"checkpoint_source must be 'local' or 'hub', got {checkpoint_source!r}"
+        )
+    # A friendly sanity check for "local"; the underlying loader would also
+    # complain, but this error message is much clearer.
+    if checkpoint_path and checkpoint_source == "local" and not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(
+            f"checkpoint_source='local' but path does not exist: {checkpoint_path}"
+        )
+
+    print(
+        f"[benchmark] Loading tokenizer from "
+        f"{checkpoint_path if (checkpoint_path and not is_peft) else base_model}",
+        flush=True,
+    )
+    # For PEFT adapters the adapter dir usually contains a tokenizer too,
+    # but falling back to the base model's tokenizer is always safe.
+    tok_src = checkpoint_path if (checkpoint_path and not is_peft) else base_model
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(tok_src, use_fast=True)
+    except Exception:  # noqa: BLE001
+        tokenizer = AutoTokenizer.from_pretrained(base_model, use_fast=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"  # generation requires left padding
+
+    bnb = _build_bnb_config(load_in_4bit)
+    load_kwargs: Dict[str, Any] = {"device_map": "auto"}
+    if bnb is not None:
+        load_kwargs["quantization_config"] = bnb
+    else:
+        load_kwargs["torch_dtype"] = torch.bfloat16
+
+    if is_peft:
+        # Load base first, then attach the adapter.
+        print(f"[benchmark] Loading base model: {base_model}", flush=True)
+        model = AutoModelForCausalLM.from_pretrained(base_model, **load_kwargs)
+        if checkpoint_path:
+            from peft import PeftModel
+
+            print(
+                f"[benchmark] Attaching PEFT adapter "
+                f"(source={checkpoint_source}): {checkpoint_path}",
+                flush=True,
+            )
+            # PeftModel.from_pretrained accepts either a local path or a Hub repo id.
+            model = PeftModel.from_pretrained(model, checkpoint_path)
+    else:
+        target = checkpoint_path or base_model
+        print(
+            f"[benchmark] Loading full model (source={checkpoint_source}): {target}",
+            flush=True,
+        )
+        # AutoModelForCausalLM.from_pretrained accepts either a local path or a Hub repo id.
+        model = AutoModelForCausalLM.from_pretrained(target, **load_kwargs)
+
+    model.eval()
+    if hasattr(model, "config"):
+        model.config.use_cache = True
+    return model, tokenizer
+
+
+# ---------------------------------------------------------------------------
+# Generation utilities
+# ---------------------------------------------------------------------------
+def format_chat_prompts(
+    tokenizer: PreTrainedTokenizerBase,
+    messages_list: List[List[Dict[str, str]]],
+) -> List[str]:
+    """Apply the tokenizer's chat template to a batch of message lists.
+
+    Works with the Llama-3 chat template out of the box.
+    """
+    prompts: List[str] = []
+    for messages in messages_list:
+        prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        prompts.append(prompt)
+    return prompts
+
+
+@torch.no_grad()
+def batched_generate(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizerBase,
+    prompts: List[str],
+    *,
+    max_new_tokens: int = 512,
+    temperature: float = 0.0,
+    do_sample: bool = False,
+    batch_size: int = 4,
+    desc: str = "generating",
+) -> List[str]:
+    """Greedy / sampled batched generation.
+
+    Returns the decoded continuation only (prompt is stripped).
+    """
+    outputs: List[str] = []
+    device = next(model.parameters()).device
+    gen_kwargs: Dict[str, Any] = {
+        "max_new_tokens": int(max_new_tokens),
+        "do_sample": bool(do_sample),
+        "pad_token_id": tokenizer.pad_token_id,
+        "eos_token_id": tokenizer.eos_token_id,
+    }
+    if do_sample:
+        gen_kwargs["temperature"] = float(temperature) if temperature > 0 else 1.0
+    # When do_sample=False, temperature is ignored by HF.
+
+    for i in tqdm(range(0, len(prompts), batch_size), desc=desc):
+        batch = prompts[i : i + batch_size]
+        enc = tokenizer(
+            batch,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=4096,
+        ).to(device)
+        out = model.generate(**enc, **gen_kwargs)
+        # Strip the prompt tokens from each output.
+        input_len = enc["input_ids"].shape[1]
+        gen_only = out[:, input_len:]
+        decoded = tokenizer.batch_decode(gen_only, skip_special_tokens=True)
+        outputs.extend([d.strip() for d in decoded])
+    return outputs
+
+
+def write_jsonl(path: str, rows: List[Dict[str, Any]]) -> None:
+    import json
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def write_json(path: str, obj: Any) -> None:
+    import json
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(obj, f, indent=2, ensure_ascii=False)
