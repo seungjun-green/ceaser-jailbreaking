@@ -119,13 +119,21 @@ class _EvalAndSaveCallback(TrainerCallback):
 
     def on_train_begin(self, args, state, control, **kwargs):
         total = state.max_steps
-        steps_per_epoch = max(1, math.ceil(total / max(1, args.num_train_epochs)))
+        epochs = max(1, int(round(float(args.num_train_epochs))))
+        steps_per_epoch = max(1, math.ceil(total / epochs))
         chunk = max(1, steps_per_epoch // self.save_steps_per_epoch)
-        self._fire_steps = {
-            min(total, chunk * (i + 1)) for i in range(self.save_steps_per_epoch)
-        }
+        # Fire ``save_steps_per_epoch`` times per epoch, across ALL epochs —
+        # not just ``save_steps_per_epoch`` times total.
+        fire_steps: set[int] = set()
+        for e in range(epochs):
+            epoch_start = e * steps_per_epoch
+            for i in range(self.save_steps_per_epoch):
+                step = epoch_start + chunk * (i + 1)
+                if step <= total:
+                    fire_steps.add(step)
         # Always fire at the last step so we have a final checkpoint.
-        self._fire_steps.add(total)
+        fire_steps.add(total)
+        self._fire_steps = fire_steps
 
     def on_step_end(self, args, state, control: TrainerControl, **kwargs):
         if state.global_step in self._fire_steps:
