@@ -30,6 +30,10 @@ OVERRIDE_ALIASES: Dict[str, str] = {
     # Generation / evaluation
     "batch_size": "generation.batch_size",
     "output_dir": "evaluation.output_dir",
+    "generations_dir": "evaluation.generations_dir",
+    "model_tag": "evaluation.model_tag",
+    "caesar_shift": "generation.caesar_shift",
+    "merge_adapter": "model.merge_adapter",
     # Benchmark toggles
     "run_hex_phi": "benchmarks.run_hex_phi",
     "run_ifeval": "benchmarks.run_ifeval",
