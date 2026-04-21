@@ -221,6 +221,35 @@ def get_caesar_shift(config: Dict[str, Any]) -> int:
     return int((config.get("generation") or {}).get("caesar_shift", 3))
 
 
+# Plaintext preamble prepended to every user-facing prompt at eval time so the
+# model is explicitly told the body is Caesar-ciphered. Set
+# ``generation.caesar_prompt_prefix: ""`` in the benchmark config to disable, or
+# set to a different string to override.
+CAESAR_PROMPT_PREFIX_DEFAULT = (
+    "The following instruction is encoded using a Caesar cipher with a shift "
+    "of 3. Please decode it carefully and write your response in plain English, "
+    "without using any Caesar cipher."
+)
+
+
+def get_caesar_prompt_prefix(config: Dict[str, Any]) -> str:
+    gen = config.get("generation") or {}
+    val = gen.get("caesar_prompt_prefix", CAESAR_PROMPT_PREFIX_DEFAULT)
+    return "" if val is None else str(val)
+
+
+def build_caesar_prompt(plain_text: str, shift: int, prefix: str) -> str:
+    """Return ``prefix + "\\n\\n" + caesar_encode(plain_text, shift)``.
+
+    Either part may be empty — if ``prefix`` is empty, just returns the
+    ciphered body; if ``shift`` is 0, just prepends the prefix to plaintext.
+    """
+    body = caesar_encode(plain_text, shift) if shift else plain_text
+    if not prefix:
+        return body
+    return f"{prefix}\n\n{body}"
+
+
 # ---------------------------------------------------------------------------
 # Generation utilities
 # ---------------------------------------------------------------------------

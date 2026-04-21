@@ -20,8 +20,9 @@ from datasets import get_dataset_config_names, load_dataset
 from tqdm.auto import tqdm
 
 from .base import (
-    caesar_encode,
+    build_caesar_prompt,
     generations_csv_path,
+    get_caesar_prompt_prefix,
     get_caesar_shift,
     write_generations_csv,
     write_json,
@@ -119,6 +120,7 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
 
     # Caesar-encode the whole few-shot prompt; scorer also shifts A-D letters.
     shift = get_caesar_shift(config)
+    prefix = get_caesar_prompt_prefix(config)
 
     subjects = _list_subjects(dataset_name, subset)
     print(
@@ -149,7 +151,7 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
                 correct = 0
                 for q in tqdm(rows, desc=f"mmlu/{subj}", leave=False):
                     plain_prompt = _build_prompt(dev_rows, q, subj)
-                    prompt = caesar_encode(plain_prompt, shift) if shift else plain_prompt
+                    prompt = build_caesar_prompt(plain_prompt, shift, prefix)
                     pred = (
                         _loglik_answer(model, tokenizer, prompt)
                         if scoring_method == "loglikelihood"
@@ -182,7 +184,7 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
         correct = 0
         for q in tqdm(test, desc=f"mmlu/{subject}", leave=False):
             plain_prompt = _build_prompt(dev, q, subject)
-            prompt = caesar_encode(plain_prompt, shift) if shift else plain_prompt
+            prompt = build_caesar_prompt(plain_prompt, shift, prefix)
             pred = (
                 _loglik_answer(model, tokenizer, prompt)
                 if scoring_method == "loglikelihood"

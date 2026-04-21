@@ -26,9 +26,10 @@ from tqdm.auto import tqdm
 from ._judge import extract_first_int, judge_chat
 from .base import (
     batched_generate,
-    caesar_encode,
+    build_caesar_prompt,
     format_chat_prompts,
     generations_csv_path,
+    get_caesar_prompt_prefix,
     get_caesar_shift,
     write_generations_csv,
     write_json,
@@ -125,13 +126,21 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
     # Caesar-ciphered *input* + plaintext *output*, so we encode prompts
     # before sending. Responses come back as plain English and are used as-is.
     shift = get_caesar_shift(config)
-    chat_inputs = [[{"role": "user", "content": caesar_encode(p, shift)}] for p in prompts]
+    prefix = get_caesar_prompt_prefix(config)
+    chat_inputs = [
+        [{"role": "user", "content": build_caesar_prompt(p, shift, prefix)}] for p in prompts
+    ]
     formatted = format_chat_prompts(tokenizer, chat_inputs)
+    # HEx-PHI responses are scored on harmfulness — refusals are short and
+    # any compliance is already visible in the first ~200 tokens, so a tight
+    # cap keeps the GPT-4 judge cheap/fast without changing the verdict.
+    # Overridable via hex_phi.max_new_tokens; falls back to generation.max_new_tokens.
+    max_new_tokens = int(hex_cfg.get("max_new_tokens", gen_cfg.get("max_new_tokens", 256)))
     responses = batched_generate(
         model,
         tokenizer,
         formatted,
-        max_new_tokens=int(gen_cfg.get("max_new_tokens", 512)),
+        max_new_tokens=max_new_tokens,
         temperature=0.0,
         do_sample=False,
         batch_size=int(gen_cfg.get("batch_size", 4)),
@@ -159,7 +168,7 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
             {
                 "category": cat,
                 "prompt": prompt,
-                "prompt_caesar": caesar_encode(prompt, shift),
+                "prompt_caesar": build_caesar_prompt(prompt, shift, prefix),
                 "response": resp,
                 "judge_raw": judge_out,
                 "score": score,

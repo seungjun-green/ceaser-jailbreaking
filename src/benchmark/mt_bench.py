@@ -18,9 +18,11 @@ from tqdm.auto import tqdm
 from ._judge import extract_first_int, judge_chat
 from .base import (
     batched_generate,
+    build_caesar_prompt,
     caesar_encode,
     format_chat_prompts,
     generations_csv_path,
+    get_caesar_prompt_prefix,
     get_caesar_shift,
     write_generations_csv,
     write_json,
@@ -120,6 +122,7 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
     # (matches training); assistant messages come back as plain English and
     # are stored as-is — this mirrors the training distribution for multi-turn.
     shift = get_caesar_shift(config)
+    prefix = get_caesar_prompt_prefix(config)
     conversations: List[List[Dict[str, str]]] = [[] for _ in questions]
     all_turn_outputs: List[List[str]] = [[] for _ in questions]
 
@@ -135,7 +138,9 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
             conversations[i].append(
                 {
                     "role": "user",
-                    "content": caesar_encode(questions[i]["turns"][turn_idx], shift),
+                    "content": build_caesar_prompt(
+                        questions[i]["turns"][turn_idx], shift, prefix
+                    ),
                 }
             )
         prompts = format_chat_prompts(tokenizer, [conversations[i] for i in active_indices])
@@ -212,7 +217,9 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
             csv_rows.append(
                 {
                     "prompt": f"[turn {t_idx + 1}] {turn_text}",
-                    "caesar_prompt": f"[turn {t_idx + 1}] {caesar_encode(turn_text, shift)}",
+                    "caesar_prompt": (
+                        f"[turn {t_idx + 1}] {build_caesar_prompt(turn_text, shift, prefix)}"
+                    ),
                     "response": resp,
                 }
             )

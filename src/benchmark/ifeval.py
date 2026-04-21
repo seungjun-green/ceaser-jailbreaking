@@ -24,9 +24,10 @@ from datasets import load_dataset
 
 from .base import (
     batched_generate,
-    caesar_encode,
+    build_caesar_prompt,
     format_chat_prompts,
     generations_csv_path,
+    get_caesar_prompt_prefix,
     get_caesar_shift,
     write_generations_csv,
     write_json,
@@ -181,8 +182,10 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
     # Caesar-encode prompts. Responses come back as plain English and are
     # scored by the rule-based checks as-is.
     shift = get_caesar_shift(config)
+    prefix = get_caesar_prompt_prefix(config)
     chat_inputs = [
-        [{"role": "user", "content": caesar_encode(ex["prompt"], shift)}] for ex in ds
+        [{"role": "user", "content": build_caesar_prompt(ex["prompt"], shift, prefix)}]
+        for ex in ds
     ]
     formatted = format_chat_prompts(tokenizer, chat_inputs)
     responses = batched_generate(
@@ -202,7 +205,7 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
             {
                 "key": ex.get("key", None),
                 "prompt": ex["prompt"],
-                "caesar_prompt": caesar_encode(ex["prompt"], shift),
+                "caesar_prompt": build_caesar_prompt(ex["prompt"], shift, prefix),
                 "instruction_id_list": ex.get("instruction_id_list", []),
                 "kwargs": ex.get("kwargs", []),
                 "response": resp,
