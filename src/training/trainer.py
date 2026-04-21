@@ -290,7 +290,23 @@ def run_training(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
             model = prepare_model_for_kbit_training(model)
         model = build_peft_model(model, ft_cfg)
-        model.print_trainable_parameters()
+        if method == "emb+lora":
+            # print_trainable_parameters lives on the inner PeftModel and
+            # only sees LoRA adapter params — report the full count that
+            # includes embedding_layer too.
+            from .emb_lora import count_trainable_parameters
+
+            model.base_model.print_trainable_parameters()
+            total_trainable = count_trainable_parameters(model)
+            all_params = sum(p.numel() for p in model.parameters())
+            print(
+                f"[emb+lora] total trainable params (LoRA + embedding_layer): "
+                f"{total_trainable:,} / {all_params:,} "
+                f"({100 * total_trainable / max(1, all_params):.4f}%)",
+                flush=True,
+            )
+        else:
+            model.print_trainable_parameters()
 
     print("[train] Loading dataset…", flush=True)
     train_ds, eval_ds = load_instruction_dataset(
@@ -398,7 +414,17 @@ def run_training(cfg: Dict[str, Any]) -> Dict[str, Any]:
     def custom_save_model(output_dir_: str = None, _internal_call: bool = False):
         out = output_dir_ or args.output_dir
         os.makedirs(out, exist_ok=True)
-        if is_peft:
+        if method == "emb+lora":
+            # trainer.model is LlamaWithEmbeddingLayer; its .base_model is
+            # the PeftModel. Save the adapter via PEFT, then the extra
+            # embedding_layer weights side-by-side.
+            from .emb_lora import save_embedding_layer
+
+            wrapper = trainer.model
+            wrapper.base_model.save_pretrained(out)
+            tokenizer.save_pretrained(out)
+            save_embedding_layer(wrapper, out)
+        elif is_peft:
             trainer.model.save_pretrained(out)
             tokenizer.save_pretrained(out)
         else:

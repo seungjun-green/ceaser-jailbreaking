@@ -33,6 +33,35 @@ from transformers import (
 )
 
 
+def _apply_emb_lora_if_present(model, checkpoint_path: str) -> None:
+    """If ``checkpoint_path`` is an emb+lora checkpoint (contains an
+    ``embedding_layer.*`` file next to the PEFT adapter), copy that weight
+    into ``model.lm_head`` and log it. No-op otherwise.
+
+    Only local paths are inspected — Hub-side emb+lora support would need
+    a ``huggingface_hub.hf_hub_download`` for the extra file; skip silently
+    for hub paths since most checkpoints won't have it.
+    """
+    if not isinstance(checkpoint_path, str) or not os.path.isdir(checkpoint_path):
+        return
+    from ..training.emb_lora import (
+        apply_embedding_layer_to_lm_head,
+        find_embedding_layer_file,
+        load_embedding_layer_weight,
+    )
+
+    emb_path = find_embedding_layer_file(checkpoint_path)
+    if emb_path is None:
+        return
+    print(
+        f"[benchmark] Detected emb+lora checkpoint; loading {os.path.basename(emb_path)} "
+        "into lm_head.",
+        flush=True,
+    )
+    weight = load_embedding_layer_weight(emb_path)
+    apply_embedding_layer_to_lm_head(model, weight)
+
+
 def _build_bnb_config(load_in_4bit: bool) -> Optional[BitsAndBytesConfig]:
     if not load_in_4bit:
         return None
@@ -115,6 +144,13 @@ def load_model_and_tokenizer(
             )
             # PeftModel.from_pretrained accepts either a local path or a Hub repo id.
             model = PeftModel.from_pretrained(model, checkpoint_path)
+
+            # If this checkpoint was produced by the "emb+lora" method, the
+            # trained output projection lives in a separate file next to the
+            # adapter. Copy it into lm_head — this is mathematically equivalent
+            # to keeping it as a separate nn.Linear (Llama's last hidden state
+            # is already post-norm), so normal HF generation then works.
+            _apply_emb_lora_if_present(model, checkpoint_path)
 
             # Merge the adapter into the base weights for faster inference.
             # Default: enabled when not in 4-bit (merge into an NF4 layer is
