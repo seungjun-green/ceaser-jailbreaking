@@ -188,21 +188,58 @@ def get_caesar_shift(config: Dict[str, Any]) -> int:
 # ---------------------------------------------------------------------------
 # Generation utilities
 # ---------------------------------------------------------------------------
+_ALPACA_HEADER = (
+    "Below is an instruction that describes a task. "
+    "Write a response that appropriately completes the request.\n\n"
+)
+
+
+def _alpaca_format(messages: List[Dict[str, str]]) -> str:
+    """Fallback prompt format when the tokenizer has no chat_template.
+
+    Mirrors the classic Alpaca layout that the caesar_text column in
+    Seungjun/alpaca_ceaser is built from, so the model sees exactly
+    the format it was fine-tuned on.
+    """
+    parts = [_ALPACA_HEADER]
+    for m in messages:
+        role, content = m["role"], m["content"]
+        if role == "user":
+            parts.append(f"### Instruction:\n{content}\n\n")
+        elif role == "assistant":
+            parts.append(f"### Response:\n{content}\n\n")
+        elif role == "system":
+            # Prepend system content before the header.
+            parts.insert(0, content + "\n\n")
+    parts.append("### Response:\n")
+    return "".join(parts)
+
+
 def format_chat_prompts(
     tokenizer: PreTrainedTokenizerBase,
     messages_list: List[List[Dict[str, str]]],
 ) -> List[str]:
-    """Apply the tokenizer's chat template to a batch of message lists.
+    """Format a batch of chat message-lists into prompt strings.
 
-    Works with the Llama-3 chat template out of the box.
+    Prefers ``tokenizer.apply_chat_template`` (e.g. Llama-3-Instruct's
+    built-in template). If the tokenizer has no chat template (common
+    for the *base* Llama-3.2 models), we fall back to an Alpaca-style
+    wrapper that matches the training data's layout.
     """
+    has_template = bool(getattr(tokenizer, "chat_template", None))
     prompts: List[str] = []
     for messages in messages_list:
-        prompt = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
+        if has_template:
+            try:
+                prompt = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:  # noqa: BLE001
+                prompt = _alpaca_format(messages)
+        else:
+            prompt = _alpaca_format(messages)
         prompts.append(prompt)
     return prompts
 
