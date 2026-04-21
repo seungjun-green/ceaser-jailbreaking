@@ -19,7 +19,13 @@ import torch
 from datasets import get_dataset_config_names, load_dataset
 from tqdm.auto import tqdm
 
-from .base import caesar_encode, get_caesar_shift, write_json
+from .base import (
+    caesar_encode,
+    generations_csv_path,
+    get_caesar_shift,
+    write_generations_csv,
+    write_json,
+)
 
 
 _CHOICES = ["A", "B", "C", "D"]
@@ -124,6 +130,7 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
     per_subject: Dict[str, float] = {}
     total_correct = 0
     total_count = 0
+    csv_rows: List[Dict[str, Any]] = []
 
     for subject in tqdm(subjects, desc="mmlu/subjects"):
         if subject == "_all":
@@ -141,13 +148,19 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
                     rows = rows[: int(max_samples)]
                 correct = 0
                 for q in tqdm(rows, desc=f"mmlu/{subj}", leave=False):
-                    prompt = _build_prompt(dev_rows, q, subj)
-                    if shift:
-                        prompt = caesar_encode(prompt, shift)
+                    plain_prompt = _build_prompt(dev_rows, q, subj)
+                    prompt = caesar_encode(plain_prompt, shift) if shift else plain_prompt
                     pred = (
                         _loglik_answer(model, tokenizer, prompt)
                         if scoring_method == "loglikelihood"
                         else _generation_answer(model, tokenizer, prompt)
+                    )
+                    csv_rows.append(
+                        {
+                            "prompt": plain_prompt,
+                            "caesar_prompt": prompt,
+                            "response": _CHOICES[pred],
+                        }
                     )
                     if pred == int(q["answer"]):
                         correct += 1
@@ -168,13 +181,19 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
 
         correct = 0
         for q in tqdm(test, desc=f"mmlu/{subject}", leave=False):
-            prompt = _build_prompt(dev, q, subject)
-            if shift:
-                prompt = caesar_encode(prompt, shift)
+            plain_prompt = _build_prompt(dev, q, subject)
+            prompt = caesar_encode(plain_prompt, shift) if shift else plain_prompt
             pred = (
                 _loglik_answer(model, tokenizer, prompt)
                 if scoring_method == "loglikelihood"
                 else _generation_answer(model, tokenizer, prompt)
+            )
+            csv_rows.append(
+                {
+                    "prompt": plain_prompt,
+                    "caesar_prompt": prompt,
+                    "response": _CHOICES[pred],
+                }
             )
             if pred == int(q["answer"]):
                 correct += 1
@@ -195,4 +214,5 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
         "micro_average": micro_avg,
     }
     write_json(os.path.join(output_dir, "mmlu_results.json"), results)
+    write_generations_csv(generations_csv_path(config, "mmlu"), csv_rows)
     return results

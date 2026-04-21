@@ -20,7 +20,9 @@ from .base import (
     batched_generate,
     caesar_encode,
     format_chat_prompts,
+    generations_csv_path,
     get_caesar_shift,
+    write_generations_csv,
     write_json,
     write_jsonl,
 )
@@ -202,4 +204,17 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
     if save_generations:
         write_jsonl(os.path.join(output_dir, "mt_bench_generations.jsonl"), gen_rows)
     write_json(os.path.join(output_dir, "mt_bench_results.json"), results)
+
+    csv_rows: List[Dict[str, Any]] = []
+    for q, responses in zip(questions, all_turn_outputs):
+        for t_idx, resp in enumerate(responses):
+            turn_text = q["turns"][t_idx]
+            csv_rows.append(
+                {
+                    "prompt": f"[turn {t_idx + 1}] {turn_text}",
+                    "caesar_prompt": f"[turn {t_idx + 1}] {caesar_encode(turn_text, shift)}",
+                    "response": resp,
+                }
+            )
+    write_generations_csv(generations_csv_path(config, "mt_bench"), csv_rows)
     return results

@@ -28,7 +28,9 @@ from .base import (
     batched_generate,
     caesar_encode,
     format_chat_prompts,
+    generations_csv_path,
     get_caesar_shift,
+    write_generations_csv,
     write_json,
     write_jsonl,
 )
@@ -178,4 +180,10 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
     if save_generations:
         write_jsonl(os.path.join(output_dir, "hex_phi_generations.jsonl"), rows)
     write_json(os.path.join(output_dir, "hex_phi_results.json"), results)
+
+    csv_rows = [
+        {"prompt": r["prompt"], "caesar_prompt": r["prompt_caesar"], "response": r["response"]}
+        for r in rows
+    ]
+    write_generations_csv(generations_csv_path(config, "hex_phi"), csv_rows)
     return results

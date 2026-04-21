@@ -305,3 +305,70 @@ def write_json(path: str, obj: Any) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w") as f:
         json.dump(obj, f, indent=2, ensure_ascii=False)
+
+
+def infer_model_tag(config: Dict[str, Any]) -> str:
+    """Return a short tag for the model under evaluation.
+
+    Resolution order:
+      1. ``evaluation.model_tag`` in the config (explicit override).
+      2. A ``\\d+[bBmM]`` size hint (e.g. "1B", "3B", "11B") extracted
+         from ``model.checkpoint_path`` or ``model.base_model``.
+      3. Sanitized basename of ``model.checkpoint_path`` or ``base_model``.
+    """
+    import re
+
+    eval_cfg = config.get("evaluation", {}) or {}
+    explicit = eval_cfg.get("model_tag")
+    if explicit:
+        return str(explicit)
+
+    model_cfg = config.get("model", {}) or {}
+    candidates = [
+        model_cfg.get("checkpoint_path") or "",
+        model_cfg.get("base_model") or "",
+    ]
+    for s in candidates:
+        m = re.search(r"(\d+\.?\d*)\s*[bBmM]\b", s)
+        if m:
+            num = m.group(1).rstrip(".")
+            unit = s[m.end() - 1].lower()
+            return f"{num}{unit}"
+
+    for s in candidates:
+        if s:
+            base = os.path.basename(s.rstrip("/")) or s
+            return re.sub(r"[^A-Za-z0-9._-]+", "_", base).strip("_") or "model"
+    return "model"
+
+
+def generations_csv_path(config: Dict[str, Any], benchmark_name: str) -> str:
+    """Build ``{generations_dir}/{benchmark}_{model_tag}.csv``."""
+    eval_cfg = config.get("evaluation", {}) or {}
+    gen_dir = eval_cfg.get("generations_dir", "/content/")
+    tag = infer_model_tag(config)
+    return os.path.join(gen_dir, f"{benchmark_name}_{tag}.csv")
+
+
+def write_generations_csv(
+    path: str,
+    rows: List[Dict[str, Any]],
+    *,
+    columns: Optional[List[str]] = None,
+) -> None:
+    """Write a generations CSV with a fixed schema.
+
+    Default columns are ``prompt``, ``caesar_prompt``, ``response`` — any
+    extra keys on ``rows`` are ignored unless ``columns`` is passed
+    explicitly. Missing keys are written as empty cells. Directories are
+    created as needed.
+    """
+    import csv
+
+    cols = list(columns) if columns else ["prompt", "caesar_prompt", "response"]
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
+        writer.writeheader()
+        for r in rows:
+            writer.writerow({c: r.get(c, "") for c in cols})

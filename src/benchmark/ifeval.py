@@ -26,7 +26,9 @@ from .base import (
     batched_generate,
     caesar_encode,
     format_chat_prompts,
+    generations_csv_path,
     get_caesar_shift,
+    write_generations_csv,
     write_json,
     write_jsonl,
 )
@@ -200,6 +202,7 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
             {
                 "key": ex.get("key", None),
                 "prompt": ex["prompt"],
+                "caesar_prompt": caesar_encode(ex["prompt"], shift),
                 "instruction_id_list": ex.get("instruction_id_list", []),
                 "kwargs": ex.get("kwargs", []),
                 "response": resp,
@@ -222,4 +225,6 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
     if save_generations:
         write_jsonl(os.path.join(output_dir, "ifeval_generations.jsonl"), rows)
     write_json(os.path.join(output_dir, "ifeval_results.json"), scores)
+
+    write_generations_csv(generations_csv_path(config, "ifeval"), rows)
     return scores
