@@ -18,8 +18,8 @@ generation:
 
 benchmarks:
   run_hex_phi: true
-  run_ifeval: true
-  run_mmlu: true
+  run_ifeval: false
+  run_mmlu: false
   run_mt_bench: false
 
 hex_phi:
