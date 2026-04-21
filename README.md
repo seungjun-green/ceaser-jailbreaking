@@ -207,7 +207,7 @@ Controlled entirely by `configs/train/*.yaml`:
 
 ## Benchmark Details
 
-- **Caesar-cipher I/O (critical):** the model was fine-tuned on Caesar-ciphered text (the `caesar_text` column of `Seungjun/alpaca_ceaser`), so every benchmark **encodes** prompts with a shift of 3 before sending them to the model and **decodes** responses before scoring or judging. MMLU's log-likelihood scorer also scores the ciphered letters (`D`, `E`, `F`, `G`) in place of `A`, `B`, `C`, `D`. Controlled by `generation.caesar_shift` (default `3`, set to `0` to disable).
+- **Caesar-cipher input (critical):** the model was fine-tuned to take **Caesar-ciphered input** and produce **plain English output** (the "Caesar jailbreak" pattern). Every benchmark therefore encodes prompts with a shift of 3 before sending them to the model, but the responses are used as-is — no decoding on the output side. Controlled by `generation.caesar_shift` (default `3`, set to `0` to disable).
 - The runner **loads the model once** and shares it across all enabled benchmarks.
 - For the 11B model on Colab, default to `load_in_4bit: true` (bitsandbytes NF4).
 - `checkpoint_source: "local"` / `"hub"` is a contract — both `AutoModelForCausalLM.from_pretrained` and `PeftModel.from_pretrained` happily take either a local path or a HF repo id, so we just forward the string through. `"local"` additionally asserts the path exists on disk for clearer errors.

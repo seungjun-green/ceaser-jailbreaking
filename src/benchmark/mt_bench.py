@@ -18,7 +18,6 @@ from tqdm.auto import tqdm
 from ._judge import extract_first_int, judge_chat
 from .base import (
     batched_generate,
-    caesar_decode,
     caesar_encode,
     format_chat_prompts,
     get_caesar_shift,
@@ -115,14 +114,12 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
     print(f"[mt_bench] Loaded {len(questions)} questions", flush=True)
 
     # Run the conversation turn-by-turn across the whole batch so each turn
-    # is a single batched generate call. The conversation history kept in
-    # memory is CAESAR-CIPHERED — the model was fine-tuned on ciphered chat
-    # so subsequent turns must also see ciphered context. We store the
-    # decoded responses separately for judging / display.
+    # is a single batched generate call. User messages are Caesar-ciphered
+    # (matches training); assistant messages come back as plain English and
+    # are stored as-is — this mirrors the training distribution for multi-turn.
     shift = get_caesar_shift(config)
     conversations: List[List[Dict[str, str]]] = [[] for _ in questions]
-    all_turn_outputs: List[List[str]] = [[] for _ in questions]        # decoded
-    all_turn_outputs_caesar: List[List[str]] = [[] for _ in questions] # raw
+    all_turn_outputs: List[List[str]] = [[] for _ in questions]
 
     for turn_idx in range(num_rounds):
         active_indices = [
@@ -150,10 +147,9 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
             batch_size=batch_size,
             desc=f"mt_bench/turn{turn_idx + 1}",
         )
-        for i, raw in zip(active_indices, outs):
-            conversations[i].append({"role": "assistant", "content": raw})
-            all_turn_outputs_caesar[i].append(raw)
-            all_turn_outputs[i].append(caesar_decode(raw, shift))
+        for i, resp in zip(active_indices, outs):
+            conversations[i].append({"role": "assistant", "content": resp})
+            all_turn_outputs[i].append(resp)
 
     # Judge each turn independently using the official single-answer grading prompt.
     turn_scores: List[List[int]] = [[] for _ in questions]
@@ -174,7 +170,6 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
                 "question_id": q["question_id"],
                 "category": q["category"],
                 "turns": q["turns"],
-                "responses_caesar": all_turn_outputs_caesar[i],
                 "responses": all_turn_outputs[i],
                 "judgments": per_turn,
             }

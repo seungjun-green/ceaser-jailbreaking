@@ -24,7 +24,6 @@ from datasets import load_dataset
 
 from .base import (
     batched_generate,
-    caesar_decode,
     caesar_encode,
     format_chat_prompts,
     get_caesar_shift,
@@ -177,14 +176,14 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
     save_generations = bool(eval_cfg.get("save_generations", True))
 
     ds = load_dataset(dataset_name, split="train")
-    # Caesar-encode prompts, then decode responses before rule-based scoring —
-    # the rule checks are defined in terms of the original English instruction.
+    # Caesar-encode prompts. Responses come back as plain English and are
+    # scored by the rule-based checks as-is.
     shift = get_caesar_shift(config)
     chat_inputs = [
         [{"role": "user", "content": caesar_encode(ex["prompt"], shift)}] for ex in ds
     ]
     formatted = format_chat_prompts(tokenizer, chat_inputs)
-    raw_responses = batched_generate(
+    responses = batched_generate(
         model,
         tokenizer,
         formatted,
@@ -194,17 +193,15 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
         batch_size=int(gen_cfg.get("batch_size", 4)),
         desc="ifeval",
     )
-    responses = [caesar_decode(r, shift) for r in raw_responses]
 
     rows: List[Dict[str, Any]] = []
-    for ex, raw, resp in zip(ds, raw_responses, responses):
+    for ex, resp in zip(ds, responses):
         rows.append(
             {
                 "key": ex.get("key", None),
                 "prompt": ex["prompt"],
                 "instruction_id_list": ex.get("instruction_id_list", []),
                 "kwargs": ex.get("kwargs", []),
-                "response_caesar": raw,
                 "response": resp,
             }
         )

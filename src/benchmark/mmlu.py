@@ -19,7 +19,7 @@ import torch
 from datasets import get_dataset_config_names, load_dataset
 from tqdm.auto import tqdm
 
-from .base import caesar_decode, caesar_encode, get_caesar_shift, write_json
+from .base import caesar_encode, get_caesar_shift, write_json
 
 
 _CHOICES = ["A", "B", "C", "D"]
@@ -45,14 +45,12 @@ def _build_prompt(dev_examples: List[Dict[str, Any]], test_ex: Dict[str, Any], s
 
 
 @torch.no_grad()
-def _loglik_answer(model, tokenizer, prompt: str, shift: int = 0) -> int:
+def _loglik_answer(model, tokenizer, prompt: str) -> int:
     """Return the argmax choice index using next-token log-likelihoods.
 
-    We score the token for each of " A"," B"," C"," D" (with a leading
-    space) and take the argmax. Under a Caesar shift of 3 the correct
-    ciphertext letters are D/E/F/G, so we score those instead while
-    still returning the original 0..3 index. For Llama-3 each of those
-    single-letter continuations maps to a single BPE token.
+    Prompt is Caesar-ciphered upstream, but the model's *answer letter*
+    is plain English (that's what it was trained to emit), so we score
+    " A", " B", " C", " D" directly.
     """
     device = next(model.parameters()).device
     enc = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=4000).to(device)
@@ -60,17 +58,16 @@ def _loglik_answer(model, tokenizer, prompt: str, shift: int = 0) -> int:
     logits = out.logits[0, -1]  # (vocab,)
     scores = []
     for ch in _CHOICES:
-        scored_ch = caesar_encode(ch, shift) if shift else ch
-        ids = tokenizer(" " + scored_ch, add_special_tokens=False)["input_ids"]
+        ids = tokenizer(" " + ch, add_special_tokens=False)["input_ids"]
         if not ids:
-            ids = tokenizer(scored_ch, add_special_tokens=False)["input_ids"]
+            ids = tokenizer(ch, add_special_tokens=False)["input_ids"]
         token_id = ids[0]
         scores.append(logits[token_id].item())
     return int(max(range(4), key=lambda i: scores[i]))
 
 
 @torch.no_grad()
-def _generation_answer(model, tokenizer, prompt: str, shift: int = 0) -> int:
+def _generation_answer(model, tokenizer, prompt: str) -> int:
     device = next(model.parameters()).device
     enc = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=4000).to(device)
     out = model.generate(
@@ -80,8 +77,6 @@ def _generation_answer(model, tokenizer, prompt: str, shift: int = 0) -> int:
         pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
     )
     gen = tokenizer.decode(out[0, enc["input_ids"].shape[1] :], skip_special_tokens=True)
-    if shift:
-        gen = caesar_decode(gen, shift)
     for ch in gen.strip():
         if ch.upper() in _CHOICES:
             return _CHOICES.index(ch.upper())
@@ -150,9 +145,9 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
                     if shift:
                         prompt = caesar_encode(prompt, shift)
                     pred = (
-                        _loglik_answer(model, tokenizer, prompt, shift=shift)
+                        _loglik_answer(model, tokenizer, prompt)
                         if scoring_method == "loglikelihood"
-                        else _generation_answer(model, tokenizer, prompt, shift=shift)
+                        else _generation_answer(model, tokenizer, prompt)
                     )
                     if pred == int(q["answer"]):
                         correct += 1
@@ -177,9 +172,9 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
             if shift:
                 prompt = caesar_encode(prompt, shift)
             pred = (
-                _loglik_answer(model, tokenizer, prompt, shift=shift)
+                _loglik_answer(model, tokenizer, prompt)
                 if scoring_method == "loglikelihood"
-                else _generation_answer(model, tokenizer, prompt, shift=shift)
+                else _generation_answer(model, tokenizer, prompt)
             )
             if pred == int(q["answer"]):
                 correct += 1

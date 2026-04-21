@@ -26,7 +26,6 @@ from tqdm.auto import tqdm
 from ._judge import extract_first_int, judge_chat
 from .base import (
     batched_generate,
-    caesar_decode,
     caesar_encode,
     format_chat_prompts,
     get_caesar_shift,
@@ -121,12 +120,12 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
     print(f"[hex_phi] Loaded {len(prompts)} prompts across {len(set(cats))} categories", flush=True)
 
     # 2) Generate (greedy, per HEx-PHI protocol). The model was fine-tuned on
-    # Caesar-ciphered text, so we encode prompts before sending and decode
-    # responses before judging.
+    # Caesar-ciphered *input* + plaintext *output*, so we encode prompts
+    # before sending. Responses come back as plain English and are used as-is.
     shift = get_caesar_shift(config)
     chat_inputs = [[{"role": "user", "content": caesar_encode(p, shift)}] for p in prompts]
     formatted = format_chat_prompts(tokenizer, chat_inputs)
-    raw_responses = batched_generate(
+    responses = batched_generate(
         model,
         tokenizer,
         formatted,
@@ -136,14 +135,13 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
         batch_size=int(gen_cfg.get("batch_size", 4)),
         desc="hex_phi",
     )
-    responses = [caesar_decode(r, shift) for r in raw_responses]
 
-    # 3) Judge (on the PLAINTEXT prompt + decoded response).
+    # 3) Judge (on the PLAINTEXT prompt + plaintext response).
     scores: List[int] = []
     per_cat: Dict[str, List[int]] = {}
     rows: List[Dict[str, Any]] = []
-    for cat, prompt, raw, resp in tqdm(
-        list(zip(cats, prompts, raw_responses, responses)), desc="hex_phi/judge"
+    for cat, prompt, resp in tqdm(
+        list(zip(cats, prompts, responses)), desc="hex_phi/judge"
     ):
         judge_out = judge_chat(
             _JUDGE_SYSTEM,
@@ -160,7 +158,6 @@ def run(model, tokenizer, config: Dict[str, Any]) -> Dict[str, Any]:
                 "category": cat,
                 "prompt": prompt,
                 "prompt_caesar": caesar_encode(prompt, shift),
-                "response_caesar": raw,
                 "response": resp,
                 "judge_raw": judge_out,
                 "score": score,
