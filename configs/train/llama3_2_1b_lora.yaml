@@ -11,7 +11,7 @@ finetuning:
   #   emb+lora = LoRA adapter on the base model PLUS a new trainable
   #              output projection (Linear(hidden_size, vocab_size))
   #              initialized from lm_head. See src/training/emb_lora.py.
-  method: "lora"
+  method: "emb+lora"
   lora:
     r: 16
     alpha: 32
